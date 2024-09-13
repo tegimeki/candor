@@ -1,8 +1,7 @@
 pub mod stats;
 
 use socketcan::{
-    BlockingCan, CanFrame, CanInterface, CanSocket, EmbeddedFrame, Frame,
-    Socket,
+    BlockingCan, CanInterface, CanSocket, EmbeddedFrame, Frame, Socket,
 };
 use std::{io, sync::mpsc, thread, time::Instant};
 
