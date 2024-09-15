@@ -5,38 +5,37 @@ CAN debugging library and tools.
 Provides similar functionality to the [can-utils](https://github.com/linux-can/can-utils)
 programs `cansniffer`, `candump`, `canbusload`, etc. with a terminal user interface
 and associated Rust libraries.
+
 ```
-CANdor 0.1.0                                                                            (? for help, q to quit) 
-┌ Messages (<, > bus order) ──────────────────────────────────────┐┌ can0 @ 125000bps ─────────────────────────┐
-│  can0          493       064  @ 95ms    04 00 00 00 00 00 00 00 ││██             5% (151 pps)                │
-│  can0          493       065  @ 95ms    00 00 00 7f 1a 06       ││6997 packets                               │
-│  can0          493       067  @ 95ms    4a 01 00 00 00 00       ││                                           │
-│  can0          493       0FB  @ 95ms    02                      │└───────────────────────────────────────────┘
-│  can0          493       0FA  @ 95ms    00 00 00 00 00 00 00 00 │┌ can1 @ 125000bps ─────────────────────────┐
-│  can0          493       068  @ 95ms    00 00 00 00 00 00 00 00 ││██             5% (152 pps)                │
-│  can0          493       069  @ 95ms    00 00 00 00 00 00 00 00 ││6997 packets                               │
-│  can0          493       06A  @ 95ms    00 1e 00 1e 00 1e 00 00 ││                                           │
-│  can0          493       06B  @ 95ms    00 00 00 00             │└───────────────────────────────────────────┘
-│  can0          493       06C  @ 95ms    00 00 00 00             │┌ vcan0 @ 15000bps ─────────────────────────┐
-│  can0          493       06D  @ 95ms    00 00 00 00             ││██████████     24% (49 pps)                │
-│  can0          493       06E  @ 95ms    00 00 00 00             ││2337 packets                               │
-│  can0          493       06F  @ 95ms    00 00 00 00             ││                                           │
-│  can0          493       070  @ 95ms    00 00 00 00             │└───────────────────────────────────────────┘
-│  can0           95       099  @ 495ms   00 00 00 00 00 00 00 00 │┌ vcan1 @ 15000bps ─────────────────────────┐
-│  vcan1         936  00001201  @ 50ms    ce a4 05 00 00 00 00 00 ││████           10% (20 pps)                │
-│  vcan0        1868       333  @ 25ms    47 09 02 52 3f ea b9 67 ││936 packets                                │
-│  vcan0         469  00000889  @ 100ms   d1 32                   ││                                           │
-│  can1          493       064  @ 95ms    04 00 00 00 00 00 00 00 │└───────────────────────────────────────────┘
-│  can1          493       065  @ 95ms    00 00 00 7f 1a 06       │┌ Dump (A=adapter, D=DLC) ──────────────────┐
-│  can1          493       067  @ 95ms    4a 01 00 00 00 00       ││vcan0        333  47 09 02 52 3f ea b9 67  │
-│  can1          493       0FB  @ 95ms    02                      ││vcan0        889  d1 32                    │
-│  can1          493       0FA  @ 95ms    00 00 00 00 00 00 00 00 ││vcan1       1201  ce a4 05 00 00 00 00 00  │
-│  can1          493       068  @ 95ms    00 00 00 00 00 00 00 00 ││vcan0        333  29 c5 58 1c a5 5b 4b 13  │
-│  can1          493       069  @ 95ms    00 00 00 00 00 00 00 00 ││vcan0        333  e4 af 41 71 31 57 5e 0d  │
-│  can1          493       06A  @ 95ms    00 1e 00 1e 00 1e 00 00 ││can1          70  00 00 00 00              │
-│  can1          493       06B  @ 95ms    00 00 00 00             ││can1          6F  00 00 00 00              │
-│  can1          493       06C  @ 95ms    00 00 00 00             ││can1          6E  00 00 00 00              │
-└─────────────────────────────────────────────────────────────────┘└───────────────────────────────────────────┘
+CANdor 0.1.0                                                                                   (? for help, q to quit)
+┌ Messages (<, > = bus order; W, w = width, u = show/hide undecoded) ────┐┌ vcan0 @ 15000bps ─────────────────────────┐
+│BMS_info                 100ms      0a 02 aa 55 34 12 0b 00             ││███████        16% (30 pps)                │
+│     300                              BMS_infoIndex 10                  ││624 packets                                │
+│                                                                        ││                                           │
+│BMS_SOC                  100ms      32 ec 87 7e 7c e8 27 02             │└───────────────────────────────────────────┘
+│     292                              BOL_energy 100.000kW              │┌ vcan1 @ 15000bps ─────────────────────────┐
+│                                      SOC_max 100.000%                  ││███             7% (18 pps)                │
+│                                      SOC_ave 49.700%                   ││395 packets                                │
+│                                      SOC_UI 50.700%                    ││                                           │
+│                                      SOC_min 5.000%                    │└───────────────────────────────────────────┘
+│                                      BMS_battTempPct 54.800%           │┌ Dump  (A=adapter, D=DLC) ─────────────────┐
+│                                                                        ││vcan1        321  1f 3f e0 04 6d a6 e1 6a  │
+│BMS_contactorRequest     100ms      c9 00 ce 04 01 00 00 00             ││vcan0        232  c9 00 ce 04 01 00 00 00  │
+│     232                              BMS_ensShouldBeActiveForDrive 1   ││vcan0        292  32 ec 87 7e 7c e8 27 02  │
+│                                      BMS_fcContactorRequest 1          ││vcan0        300  0a 02 aa 55 34 12 0b 00  │
+│                                      BMS_fcLinkOkToEnergizeRequest 1   ││vcan1        352  b3 fb b7 5a 19 8e 33 77  │
+│                                      BMS_gpoHasCompleted 1             ││vcan1        392  70 ff 77 48              │
+│                                      BMS_internalHvilSenseV 1.230V     ││vcan1        321  e6 cd aa 70 f4 38 d1 35  │
+│                                      BMS_packContactorRequest 1        ││vcan0        232  c9 00 ce 04 01 00 00 00  │
+│                                      BMS_pcsPwmDisable 0               ││vcan0        292  32 f0 87 be 7c e8 27 02  │
+│                                                                        ││vcan0        300  0a 02 aa 55 34 12 0b 00  │
+│     321                 100ms      1f 3f e0 04 6d a6 e1 6a             ││vcan1        321  d1 af 56 7e da 2c 59 71  │
+│                                                                        ││vcan0        232  c9 00 ce 04 01 00 00 00  │
+│     392                 200ms      70 ff 77 48                         ││vcan0        292  32 f4 87 fe 7c e8 27 02  │
+│                                                                        ││vcan0        300  0a 02 aa 55 34 12 0b 00  │
+│     352                 250ms      b3 fb b7 5a 19 8e 33 77             ││vcan1        392  fc ba 19 4a              │
+│                                                                        ││vcan1        321  40 66 df 30 ca 0c ee 1c  │
+└────────────────────────────────────────────────────────────────────────┘└───────────────────────────────────────────┘
 ```
 
 ## Features
@@ -44,7 +43,7 @@ CANdor 0.1.0                                                                    
 - [x] Monitor multiple CAN interfaces
 - [x] Show frequency, count, etc. grouped by ID
 * [ ] Sorting / filtering the monitored data
-- [ ] Decode CAN data using DBC files
+- [x] Decode CAN data using DBC files (works, needs refining)
 - [ ] Analyze PCAP files with CAN traces
 - [ ] Traffic generator, pattern- and DBC-based
 
