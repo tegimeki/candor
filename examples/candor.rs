@@ -1,16 +1,28 @@
-use candor::{stats::Message, stats::Stats, Packet, Source};
+use candor::{
+    sources::{peak_trace::PeakTraceSource, Source},
+    stats::Message,
+    stats::Stats,
+    Packet,
+};
+
+#[cfg(feature = "socketcan")]
+use candor::sources::socketcan::SocketCanSource;
 
 use clap::Parser;
 use regex::Regex;
 use std::collections::VecDeque;
 use std::fmt::Debug;
+use std::io::{Error, ErrorKind, Result};
+use std::path::Path;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
+
+use cli_log::*;
 
 use ratatui::{
     crossterm::event::{self, Event, KeyCode},
     layout::{Alignment, Constraint, Layout, Margin, Rect},
-    style::{Color, Modifier, Style},
+    style::{Color, Modifier, Style, Stylize},
     text::{Line, Span, Text},
     widgets::{Block, Cell, Gauge, Paragraph, Row, Table, TableState},
     DefaultTerminal, Frame,
@@ -29,7 +41,9 @@ const CHANNEL_COLORS: [Color; 10] = [
     Color::LightCyan,
 ];
 
-fn main() -> std::io::Result<()> {
+fn main() -> Result<()> {
+    init_cli_log!();
+
     let mut app = App::new()?;
     let terminal = ratatui::init();
     let result = app.run(terminal);
@@ -59,7 +73,7 @@ struct Cli {
 }
 
 struct Channel {
-    source: Source,
+    source: Box<dyn Source>,
     stats: Stats,
 }
 
@@ -70,17 +84,18 @@ struct App {
     packets: VecDeque<Packet>,
     table_state: TableState,
     width: u16,
-    selection: i32,
     expanded: bool,
     order: usize,
     idle: bool,
     show_adapter: bool,
     show_undecoded: bool,
     show_dlc: bool,
+    show_bin: bool,
+    visible_messages: u16,
 }
 
 impl App {
-    fn new() -> std::io::Result<Self> {
+    fn new() -> Result<Self> {
         let cli = Cli::parse();
 
         // attach packet channel to all adapters
@@ -89,8 +104,31 @@ impl App {
         for iface in cli.adapter.iter() {
             let index = channels.len();
             let (ifname, dbcs) = App::parse_source(iface);
-            let source =
-                Source::new(ifname.as_str(), index, cli.baud, tx.clone())?;
+            let path = Path::new(&ifname);
+            let extension = match path.extension() {
+                Some(s) => s.to_str().unwrap_or(""),
+                None => "",
+            };
+
+            let source: Box<dyn Source> = match extension {
+                "trc" => Box::new(PeakTraceSource::new(
+                    ifname.as_str(),
+                    index,
+                    cli.baud,
+                    tx.clone(),
+                )?),
+
+                #[cfg(not(feature = "socketcan"))]
+                _ => return Err(Error::from(ErrorKind::InvalidInput)),
+                #[cfg(feature = "socketcan")]
+                _ => Box::new(SocketCanSource::new(
+                    ifname.as_str(),
+                    index,
+                    cli.baud,
+                    tx.clone(),
+                )?),
+            };
+
             let baud = source.baud();
             let mut channel = Channel {
                 source,
@@ -111,13 +149,14 @@ impl App {
             packets: VecDeque::<Packet>::new(),
             table_state: TableState::default().with_selected(0),
             width: 60,
-            selection: -1,
             expanded: true,
             order: 0,
             idle: false,
             show_adapter,
             show_undecoded: true,
             show_dlc: true,
+            show_bin: false,
+            visible_messages: 1,
         })
     }
 
@@ -129,7 +168,7 @@ impl App {
 
         loop {
             let now = Instant::now();
-            if now - stats_time > interval {
+            if now - stats_time >= interval {
                 for channel in self.channels.iter_mut() {
                     channel.stats.periodic();
                 }
@@ -183,6 +222,9 @@ impl App {
                         KeyCode::Char('D') => {
                             self.show_dlc = !self.show_dlc;
                         }
+                        KeyCode::Char('B') => {
+                            self.show_bin = !self.show_bin;
+                        }
                         // width adjustment
                         KeyCode::Char('W') => {
                             self.width += 1;
@@ -205,8 +247,13 @@ impl App {
                         }
                         KeyCode::Right => self.expand(),
                         KeyCode::Left => self.collapse(),
-                        KeyCode::Up => self.select_prev(),
-                        KeyCode::Down => self.select_next(),
+                        KeyCode::Up => self.update_selection(-1),
+                        KeyCode::Down => self.update_selection(1),
+                        KeyCode::PageUp => self
+                            .update_selection(-(self.visible_messages as i32)),
+                        KeyCode::PageDown => {
+                            self.update_selection(self.visible_messages as i32)
+                        }
                         _ => {} // TODO: show help etc.
                     }
                 }
@@ -252,7 +299,6 @@ impl App {
                     .count()
             })
             .sum::<usize>()
-            - 1
     }
 
     fn expand(&mut self) {
@@ -263,40 +309,12 @@ impl App {
         self.expanded = false;
     }
 
-    pub fn select_next(&mut self) {
-        let i = match self.table_state.selected() {
-            Some(i) => {
-                if i >= self.max_selection() {
-                    0
-                } else {
-                    i + 1
-                }
-            }
-            None => 0,
-        };
-        self.table_state.select(Some(i));
-        //        self.scroll_state = self.scroll_state.position(i * ITEM_HEIGHT);
-    }
-
-    pub fn select_prev(&mut self) {
-        let i = match self.table_state.selected() {
-            Some(i) => {
-                if i == 0 {
-                    self.max_selection()
-                } else {
-                    i - 1
-                }
-            }
-            None => 0,
-        };
-        self.table_state.select(Some(i));
-        //        self.scroll_state = self.scroll_state.position(i * ITEM_HEIGHT);
-    }
-
-    fn move_selection(&mut self, by: i32) {
-        self.selection =
-            (self.selection + by).clamp(0, self.max_selection() as i32);
-        self.idle = false;
+    fn update_selection(&mut self, by: i32) {
+        let current = self.table_state.selected().or(Some(0)).unwrap() as i32;
+        let mut new = current + by;
+        let max = self.max_selection() as i32;
+        new = new.clamp(0, max - 1);
+        self.table_state.select(Some(new as usize));
     }
 
     fn next_channel(&self, index: usize) -> usize {
@@ -362,16 +380,18 @@ impl App {
         let mut order = self.order;
         for _ in 0..count {
             let channel = self.channels.get(order).unwrap();
-            for message in channel
-                .stats
-                .messages()
-                .iter()
-                .filter(|m| self.show_undecoded || m.dbc.is_some())
-            {
+
+            let messages = channel.stats.messages();
+            for index in channel.stats.ordering().iter() {
+                let message = messages.get(*index).unwrap();
+                if !self.show_undecoded && message.dbc.is_none() {
+                    continue;
+                }
+
                 let color = self.channel_color(message.current.source);
                 let row_style = Style::default().fg(color);
 
-                let mut height = 2;
+                let mut height = 1;
 
                 let dbc_message = channel.stats.dbc_message(message);
 
@@ -380,6 +400,7 @@ impl App {
                 if let Some(msg) = dbc_message {
                     id.push_str(msg.message_name().as_str());
                     id.push('\n');
+                    height += 1;
                 }
                 if message.extended {
                     id.push_str(format!("{:08X} ", message.id).as_str());
@@ -389,15 +410,22 @@ impl App {
 
                 // period
                 let period = if message.missing.is_zero() {
-                    format!("{:5.0?}", message.delta)
+                    let q = ((message.delta.as_millis() as u64 + 5) / 10) * 10;
+                    format!("{:5.0?}", Duration::from_millis(q))
                 } else {
                     format!("! -{:5.0?}", message.missing)
                 };
 
                 // raw data
                 let mut data = "".to_string();
-                for byte in message.current.bytes.iter() {
-                    data.push_str(format!("{:02x} ", byte).as_str());
+                if self.show_bin {
+                    for byte in message.current.bytes.iter() {
+                        data.push_str(format!("{:08b}", byte).as_str());
+                    }
+                } else {
+                    for byte in message.current.bytes.iter() {
+                        data.push_str(format!("{:02x} ", byte).as_str());
+                    }
                 }
 
                 // signals
@@ -442,10 +470,9 @@ impl App {
             ],
         )
         .highlight_style(selected_style)
-        .block(
-            Block::bordered()
-                .title(" Messages (<, > = bus order; W, w = width, u = show/hide undecoded) "),
-        );
+        .block(Block::bordered().title(
+            " Message──────────────── Period ─── Data (B = toggle binary) ",
+        ));
 
         frame.render_stateful_widget(table, area, &mut self.table_state);
     }
@@ -460,7 +487,7 @@ impl App {
             Color::Green
         };
         let title = Line::from(vec![
-            Span::styled("CANdor ", Style::default().fg(color)),
+            Span::bold(" ⚡︎ CANdor ".into()),
             Span::styled(env!("CARGO_PKG_VERSION"), Style::default().fg(color)),
         ]);
         frame.render_widget(&title, area);
@@ -477,6 +504,7 @@ impl App {
             Constraint::Percentage(100 - self.width),
         ];
         let cols = Layout::horizontal(constraints).split(area);
+        self.visible_messages = cols[0].height - 2;
 
         // main messages panel
         self.draw_messages(frame, cols[0]);
@@ -514,7 +542,11 @@ impl App {
 
             let text_area =
                 Rect::new(inner.x, inner.y + 1, inner.width, inner.height - 1);
-            let text = format!("{} packets", stat.packets);
+            let message_count = stat.messages().len();
+            let text = format!(
+                "{} packets, {} unique by ID",
+                stat.packets, message_count
+            );
             let load = Paragraph::new(text);
             frame.render_widget(load, text_area);
         }

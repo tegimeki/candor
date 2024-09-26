@@ -1,6 +1,8 @@
 use crate::Packet;
 use bitvec::prelude::*;
-use can_dbc::{ByteOrder, MultiplexIndicator, ValueType, DBC};
+use can_dbc::{ByteOrder, MessageId, MultiplexIndicator, ValueType, DBC};
+use cli_log::*;
+use std::collections::BinaryHeap;
 use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::fs::File;
@@ -21,6 +23,8 @@ pub struct Stats {
     bytes_accum: u32,
     packet_accum: u32,
     dbcs: Vec<DBC>,
+    sorted: bool,
+    lookup: Vec<usize>,
 }
 
 /// Message stats
@@ -65,6 +69,10 @@ impl Stats {
         &self.messages
     }
 
+    pub fn ordering(&self) -> &Vec<usize> {
+        &self.lookup
+    }
+
     pub fn periodic(&mut self) {
         self.load =
             (self.load + (100 * ((self.bytes_accum * 10) + 5) / self.baud)) / 2;
@@ -73,13 +81,13 @@ impl Stats {
         self.packet_accum = 0;
 
         // mark expired data
-        for info in self.messages.iter_mut() {
-            let now = Instant::now();
-            let time = info.time.unwrap_or(now - Duration::from_secs(1));
-            let expired = (info.delta * 3).min(Duration::from_secs(2));
+        let now = Instant::now();
+        for message in self.messages.iter_mut() {
+            let time = message.time.unwrap_or(now - Duration::from_secs(1));
+            let expired = (message.delta * 3).min(Duration::from_secs(2));
             if now - time > expired {
-                info.missing = now - time;
-                info.delta = Duration::default();
+                message.missing = now - time;
+                message.delta = Duration::default();
             }
         }
     }
@@ -97,18 +105,35 @@ impl Stats {
             // figure out if message is in one of the DBCs
             let mut found: Option<usize> = None;
             for (index, dbc) in self.dbcs.iter().enumerate() {
-                let msg = dbc
-                    .messages()
-                    .iter()
-                    .find(|&m| m.message_id().raw() == packet.id);
+                let msg =
+                    dbc.messages().iter().find(|&m| match *m.message_id() {
+                        MessageId::Standard(id) => id == packet.id as u16,
+                        MessageId::Extended(id) => id == packet.id,
+                    });
                 if msg.is_some() {
                     found = Some(index);
                     break;
                 }
             }
+
+            self.sorted = false;
+
             self.messages.push_back(Message::new(packet, found));
             self.messages.len() - 1
         });
+
+        if !self.sorted {
+            let mut heap: BinaryHeap<u32> = BinaryHeap::new();
+            self.lookup.resize(self.messages.len(), 0);
+            for message in self.messages.iter() {
+                heap.push(message.id);
+            }
+            for index in (0..self.lookup.len()).rev() {
+                let e = *self.ids.entry(heap.pop().unwrap()).or_default();
+                self.lookup[index] = e;
+            }
+            self.sorted = true;
+        }
 
         let message = self.messages.get_mut(index).expect("index for id");
 
@@ -118,6 +143,7 @@ impl Stats {
 
         let time = packet.time.unwrap_or(Instant::now());
         let delta = time - message.time.unwrap_or(time);
+
         message.delta = delta;
         message.missing = Duration::default();
         message.time = packet.time;
@@ -125,13 +151,12 @@ impl Stats {
 
     pub fn dbc_message(&self, message: &Message) -> Option<&can_dbc::Message> {
         match message.dbc {
-            Some(dbc) => self
-                .dbcs
-                .get(dbc)
-                .unwrap()
-                .messages()
-                .iter()
-                .find(|&m| m.message_id().raw() == message.id),
+            Some(dbc) => self.dbcs.get(dbc).unwrap().messages().iter().find(
+                |&m| match *m.message_id() {
+                    MessageId::Standard(id) => id == message.id as u16,
+                    MessageId::Extended(id) => id == message.id,
+                },
+            ),
             None => None,
         }
     }
