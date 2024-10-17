@@ -1,6 +1,5 @@
 use candor::{
     sources::{peak_trace::PeakTraceSource, Source},
-    stats::Message,
     stats::Stats,
     Packet,
 };
@@ -87,9 +86,9 @@ struct App {
     expanded: bool,
     order: usize,
     idle: bool,
-    show_adapter: bool,
+    show_source: bool,
     show_undecoded: bool,
-    show_dlc: bool,
+    show_ascii: bool,
     show_bin: bool,
     visible_messages: u16,
 }
@@ -140,7 +139,7 @@ impl App {
             channels.push(channel);
         }
 
-        let show_adapter = cli.no_color && channels.len() > 1;
+        let show_source = cli.no_color && channels.len() > 1;
 
         Ok(Self {
             cli,
@@ -152,9 +151,9 @@ impl App {
             expanded: true,
             order: 0,
             idle: false,
-            show_adapter,
+            show_source,
             show_undecoded: true,
-            show_dlc: true,
+            show_ascii: false,
             show_bin: false,
             visible_messages: 1,
         })
@@ -194,7 +193,7 @@ impl App {
 
                         self.packets.push_front(packet);
                         if self.packets.len() > 100 {
-                            let removed = self.packets.pop_back();
+                            let _ = self.packets.pop_back();
                         }
                         self.idle = false;
                     }
@@ -214,16 +213,18 @@ impl App {
                 self.idle = false;
                 if let Event::Key(key) = event::read()? {
                     match key.code {
+                        KeyCode::Esc => stop = !stop,
                         KeyCode::Char('q') => break,
-                        KeyCode::Char('s') => stop = !stop,
-                        KeyCode::Char('A') => {
-                            self.show_adapter = !self.show_adapter;
+                        KeyCode::Char('S') => {
+                            self.show_source = !self.show_source;
                         }
-                        KeyCode::Char('D') => {
-                            self.show_dlc = !self.show_dlc;
+                        KeyCode::Char('A') => {
+                            self.show_ascii = !self.show_ascii;
+                            self.show_bin = false;
                         }
                         KeyCode::Char('B') => {
                             self.show_bin = !self.show_bin;
+                            self.show_ascii = false;
                         }
                         // width adjustment
                         KeyCode::Char('W') => {
@@ -310,7 +311,7 @@ impl App {
     }
 
     fn update_selection(&mut self, by: i32) {
-        let current = self.table_state.selected().or(Some(0)).unwrap() as i32;
+        let current = self.table_state.selected().unwrap_or(0) as i32;
         let mut new = current + by;
         let max = self.max_selection() as i32;
         new = new.clamp(0, max - 1);
@@ -334,9 +335,12 @@ impl App {
     }
 
     fn draw_dump(&mut self, frame: &mut Frame, area: Rect) {
-        let height = area.height;
-        let mut lines: Vec<Line> = Vec::with_capacity(height as usize + 2);
-        let count = self.channels.len();
+        if area.height == 0 {
+            return;
+        }
+
+        let mut lines: Vec<Line> = Vec::with_capacity(area.height as usize + 2);
+        let mut count = area.height;
 
         for packet in self.packets.iter() {
             let channel = self
@@ -346,7 +350,7 @@ impl App {
 
             let mut text = "".to_string();
 
-            if self.show_adapter {
+            if self.show_source {
                 text.push_str(format!("{:8}", channel.source.name()).as_str());
             }
 
@@ -355,9 +359,7 @@ impl App {
             } else {
                 text.push_str(format!("     {:3X} ", packet.id).as_str());
             }
-            if self.show_dlc {
-                text.push_str(format!("  [{}]  ", packet.bytes.len()).as_str());
-            }
+            text.push_str(format!("  [{}]  ", packet.bytes.len()).as_str());
 
             for byte in packet.bytes.iter() {
                 text.push_str(format!(" {:02x}", byte).as_str());
@@ -366,9 +368,13 @@ impl App {
                 Line::from(text)
                     .style(Style::new().fg(self.channel_color(packet.source))),
             );
+            count -= 1;
+            if count == 0 {
+                break;
+            }
         }
         let summary = Paragraph::new(lines)
-            .block(Block::bordered().title(" Dump  (A=adapter, D=DLC) "));
+            .block(Block::bordered().title(" Dump  (S=show source)"));
         frame.render_widget(summary, area);
     }
 
@@ -376,14 +382,14 @@ impl App {
         let selected_style = Style::default().add_modifier(Modifier::REVERSED);
 
         let mut rows: Vec<Row> = Vec::with_capacity(area.height as usize + 2);
-        let count = self.channels.len();
+        let channel_count = self.channels.len();
         let mut order = self.order;
-        for _ in 0..count {
+        for _ in 0..channel_count {
             let channel = self.channels.get(order).unwrap();
 
             let messages = channel.stats.messages();
-            for index in channel.stats.ordering().iter() {
-                let message = messages.get(*index).unwrap();
+            for message_index in channel.stats.ordering().iter() {
+                let message = messages.get(*message_index).unwrap();
                 if !self.show_undecoded && message.dbc.is_none() {
                     continue;
                 }
@@ -425,6 +431,19 @@ impl App {
                 } else {
                     for byte in message.current.bytes.iter() {
                         data.push_str(format!("{:02x} ", byte).as_str());
+                    }
+                    if self.show_ascii {
+                        let len = message.current.bytes.len();
+                        for _ in len..9 {
+                            data.push_str("   ");
+                        }
+                        for byte in message.current.bytes.iter().rev() {
+                            if *byte >= 0x20 && *byte <= 0x7F {
+                                data.push(*byte as char);
+                            } else {
+                                data.push('.');
+                            }
+                        }
                     }
                 }
 
@@ -471,7 +490,7 @@ impl App {
         )
         .highlight_style(selected_style)
         .block(Block::bordered().title(
-            " Message──────────────── Period ─── Data (B = toggle binary) ",
+            " Message──────────────── Period ─── Data (A=ASCII, B=binary) ",
         ));
 
         frame.render_stateful_widget(table, area, &mut self.table_state);

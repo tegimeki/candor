@@ -1,7 +1,6 @@
 use crate::Packet;
 use bitvec::prelude::*;
 use can_dbc::{ByteOrder, MessageId, MultiplexIndicator, ValueType, DBC};
-use cli_log::*;
 use std::collections::BinaryHeap;
 use std::collections::HashMap;
 use std::collections::VecDeque;
@@ -56,10 +55,7 @@ impl Stats {
         let mut buffer = Vec::new();
         f.read_to_end(&mut buffer)?;
         let dbc = DBC::from_slice(&buffer).map_err(|e| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!("{:?}", e),
-            )
+            io::Error::new(io::ErrorKind::InvalidData, format!("{:?}", e))
         })?;
         self.dbcs.push(dbc);
         Ok(())
@@ -164,7 +160,7 @@ impl Stats {
     // TODO: move into a decode module (and handle value tables, etc.)
     pub fn signal_text(
         &self,
-        msg: &can_dbc::Message,
+        _msg: &can_dbc::Message,
         sig: &can_dbc::Signal,
         packet: &Packet,
     ) -> String {
