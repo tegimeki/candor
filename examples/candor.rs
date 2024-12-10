@@ -62,6 +62,10 @@ struct Cli {
     #[arg(short, long, default_value = "125000")]
     baud: u32,
 
+    /// Sync time across multiple trace files
+    #[arg(short, long)]
+    sync_time: bool,
+
     /// Don't use colors
     #[arg(short, long)]
     no_color: bool,
@@ -87,6 +91,7 @@ struct App {
     order: usize,
     idle: bool,
     show_source: bool,
+    enable_decode: bool,
     show_undecoded: bool,
     show_ascii: bool,
     show_bin: bool,
@@ -114,11 +119,13 @@ impl App {
                     ifname.as_str(),
                     index,
                     cli.baud,
+                    cli.sync_time,
                     tx.clone(),
                 )?),
 
                 #[cfg(not(feature = "socketcan"))]
                 _ => return Err(Error::from(ErrorKind::InvalidInput)),
+
                 #[cfg(feature = "socketcan")]
                 _ => Box::new(SocketCanSource::new(
                     ifname.as_str(),
@@ -152,6 +159,7 @@ impl App {
             order: 0,
             idle: false,
             show_source,
+            enable_decode: true,
             show_undecoded: true,
             show_ascii: false,
             show_bin: false,
@@ -225,6 +233,9 @@ impl App {
                         KeyCode::Char('B') => {
                             self.show_bin = !self.show_bin;
                             self.show_ascii = false;
+                        }
+                        KeyCode::Char('d') => {
+                            self.enable_decode = !self.enable_decode;
                         }
                         // width adjustment
                         KeyCode::Char('W') => {
@@ -399,7 +410,11 @@ impl App {
 
                 let mut height = 1;
 
-                let dbc_message = channel.stats.dbc_message(message);
+                let dbc_message = if self.enable_decode {
+                    channel.stats.dbc_message(message)
+                } else {
+                    None
+                };
 
                 // Message name / ID
                 let mut id = "".to_string();

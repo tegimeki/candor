@@ -15,7 +15,7 @@ pub struct PeakTraceFile {
 }
 
 impl PeakTraceFile {
-    pub fn new(name: &str, index: usize) -> io::Result<Self> {
+    pub fn new(name: &str, index: usize, sync_time: bool) -> io::Result<Self> {
         let file = File::open(name)?;
         let buf = BufReader::new(file);
         let lines: Vec<String> = buf
@@ -25,6 +25,7 @@ impl PeakTraceFile {
 
         let mut packets: Vec<Packet> = Vec::with_capacity(lines.len());
         let start_time = Instant::now();
+        let mut first_time: Option<u64> = None;
 
         for line in lines.iter() {
             if line.starts_with(";") {
@@ -44,13 +45,27 @@ impl PeakTraceFile {
             let id = u32::from_str_radix(&fields[3], 16).unwrap_or(0);
             let dlc = u32::from_str_radix(&fields[5], 16).unwrap_or(0);
             let time_ms = fields[1].parse::<f32>().unwrap_or(0.0f32);
-            let time_ns = (time_ms * 1000000.0) as u64;
+            let mut time_ns = (time_ms * 1000000.0) as u64;
             let mut bytes: Vec<u8> = Vec::with_capacity(dlc as usize);
             for i in 0..dlc {
                 bytes.push(
                     u8::from_str_radix(&fields[6 + i as usize], 16)
                         .unwrap_or(0),
                 );
+            }
+
+            match first_time {
+                None => {
+                    first_time = Some(time_ns);
+                    if sync_time {
+                        time_ns = 0
+                    }
+                }
+                Some(t) => {
+                    if sync_time {
+                        time_ns -= t
+                    }
+                }
             }
 
             let packet = Packet {
@@ -76,9 +91,10 @@ impl PeakTraceSource {
         name: &str,
         index: usize,
         default_baud: u32,
+        sync_time: bool,
         tx: mpsc::Sender<Packet>,
     ) -> io::Result<Self> {
-        let file = PeakTraceFile::new(name, index)?;
+        let file = PeakTraceFile::new(name, index, sync_time)?;
         thread::spawn(move || {
             let count = file.packets.len();
             let mut index = 0;
