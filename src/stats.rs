@@ -174,20 +174,30 @@ impl Stats {
         }
 
         let bytes = packet.bytes.as_slice();
-        let raw = match sig.byte_order() {
-            ByteOrder::LittleEndian => {
-                bytes.view_bits::<Lsb0>()[start..start + size].load_le::<u64>()
-            }
-            ByteOrder::BigEndian => bytes.view_bits::<Msb0>()
-                [(start - (size - 1))..start + 1]
-                .load_be::<u64>(),
-        };
-
         let value = match *sig.value_type() {
-            ValueType::Unsigned => raw as f32,
-            ValueType::Signed => i64::from_ne_bytes(raw.to_ne_bytes()) as f32,
+            ValueType::Unsigned => {
+                let raw = match sig.byte_order() {
+                    ByteOrder::LittleEndian => bytes.view_bits::<Lsb0>()
+                        [start..start + size]
+                        .load_le::<u64>(),
+                    ByteOrder::BigEndian => bytes.view_bits::<Msb0>()
+                        [(start - (size - 1))..start + 1]
+                        .load_be::<u64>(),
+                };
+                raw as f32
+            }
+            ValueType::Signed => {
+                let raw = match sig.byte_order() {
+                    ByteOrder::LittleEndian => bytes.view_bits::<Lsb0>()
+                        [start..start + size]
+                        .load_le::<i64>(),
+                    ByteOrder::BigEndian => bytes.view_bits::<Msb0>()
+                        [(start - (size - 1))..start + 1]
+                        .load_be::<i64>(),
+                };
+                i64::from_ne_bytes(raw.to_ne_bytes()) as f32
+            }
         };
-
         let factor = *sig.factor() as f32;
         let offset = *sig.offset() as f32;
         if factor != 1.0 || offset < 0.0 {
