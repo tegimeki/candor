@@ -1,10 +1,9 @@
 # CANDOR
 
-CAN debugging library and tools.
+A tool for CAN-bus debugging, observation, and reverse-engineering.
 
 Provides similar functionality to the [can-utils](https://github.com/linux-can/can-utils)
-programs `cansniffer`, `candump`, `canbusload`, etc. with a terminal user interface
-and associated Rust libraries.
+programs `cansniffer`, `candump`, `canbusload`, etc. with a terminal user interface.
 
 ```
 CANdor 0.1.0                                                                                   (? for help, q to quit)
@@ -46,11 +45,6 @@ CANdor 0.1.0                                                                    
 - [x] Decode CAN data using DBC files (works, needs refining)
 - [ ] Analyze PCAP files with CAN traces
 - [ ] Traffic generator, pattern- and DBC-based
-
-## TODOs
-* Clean up the stats, they are super basic right now
-* Split the library and TUI into separate workspace projects
-* Show live diffs in data
 
 ## License
 

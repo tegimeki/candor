@@ -1,4 +1,4 @@
-use crate::{sources::Source, Packet};
+use crate::{sources::Source, AppEvent, Packet};
 
 use std::{f32, u32, u8};
 use std::{
@@ -92,7 +92,7 @@ impl PeakTraceSource {
         index: usize,
         default_baud: u32,
         sync_time: bool,
-        tx: mpsc::Sender<Packet>,
+        tx: mpsc::Sender<AppEvent>,
     ) -> io::Result<Self> {
         let file = PeakTraceFile::new(name, index, sync_time)?;
         thread::spawn(move || {
@@ -108,7 +108,7 @@ impl PeakTraceSource {
 
                 packet.time = Some(Instant::now());
 
-                if tx.send(packet).is_err() {
+                if tx.send(AppEvent::Packet(packet)).is_err() {
                     println!("Error sending frame event");
                 }
 

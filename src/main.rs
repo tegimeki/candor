@@ -1,20 +1,21 @@
+//! CANdor TUI
+
 use candor::{
     sources::{peak_trace::PeakTraceSource, Source},
     stats::Stats,
-    Packet,
+    AppEvent, Packet,
 };
-
-#[cfg(feature = "socketcan")]
-use candor::sources::socketcan::SocketCanSource;
 
 use clap::Parser;
 use regex::Regex;
-use std::collections::VecDeque;
 use std::fmt::Debug;
-use std::io::{Error, ErrorKind, Result};
+use std::io::Result;
+#[cfg(not(feature = "socketcan"))]
+use std::io::{Error, ErrorKind};
 use std::path::Path;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
+use std::{collections::VecDeque, thread};
 
 use cli_log::*;
 
@@ -26,6 +27,9 @@ use ratatui::{
     widgets::{Block, Cell, Gauge, Paragraph, Row, Table, TableState},
     DefaultTerminal, Frame,
 };
+
+#[cfg(feature = "socketcan")]
+use candor::sources::socketcan::SocketCanSource;
 
 const CHANNEL_COLORS: [Color; 10] = [
     Color::Blue,
@@ -54,7 +58,7 @@ fn main() -> Result<()> {
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
-struct Cli {
+struct Args {
     /// CAN adapter(s)
     adapter: Vec<String>,
 
@@ -81,8 +85,8 @@ struct Channel {
 }
 
 struct App {
-    cli: Cli,
-    events: mpsc::Receiver<Packet>,
+    cli: Args,
+    events: mpsc::Receiver<AppEvent>,
     channels: Vec<Channel>,
     packets: VecDeque<Packet>,
     table_state: TableState,
@@ -100,12 +104,12 @@ struct App {
 
 impl App {
     fn new() -> Result<Self> {
-        let cli = Cli::parse();
+        let args = Args::parse();
 
         // attach packet channel to all adapters
-        let (tx, rx) = mpsc::channel::<Packet>();
+        let (tx, rx) = mpsc::channel::<AppEvent>();
         let mut channels: Vec<Channel> = vec![];
-        for iface in cli.adapter.iter() {
+        for iface in args.adapter.iter() {
             let index = channels.len();
             let (ifname, dbcs) = App::parse_source(iface);
             let path = Path::new(&ifname);
@@ -118,8 +122,8 @@ impl App {
                 "trc" => Box::new(PeakTraceSource::new(
                     ifname.as_str(),
                     index,
-                    cli.baud,
-                    cli.sync_time,
+                    args.baud,
+                    args.sync_time,
                     tx.clone(),
                 )?),
 
@@ -130,7 +134,7 @@ impl App {
                 _ => Box::new(SocketCanSource::new(
                     ifname.as_str(),
                     index,
-                    cli.baud,
+                    args.baud,
                     tx.clone(),
                 )?),
             };
@@ -146,10 +150,20 @@ impl App {
             channels.push(channel);
         }
 
-        let show_source = cli.no_color && channels.len() > 1;
+        let show_source = args.no_color && channels.len() > 1;
+
+        // thread for user input events
+        thread::spawn({
+            let tx = tx.clone();
+            move || loop {
+                if let Ok(Event::Key(key)) = event::read() {
+                    tx.send(AppEvent::Key(key)).ok();
+                }
+            }
+        });
 
         Ok(Self {
-            cli,
+            cli: args,
             events: rx,
             channels,
             packets: VecDeque::<Packet>::new(),
@@ -169,57 +183,45 @@ impl App {
 
     fn run(&mut self, mut terminal: DefaultTerminal) -> std::io::Result<()> {
         let mut stop = false;
-        let mut draw_time: Instant = Instant::now();
+        let stats_interval = Duration::from_secs(1);
+        let draw_interval = Duration::from_millis(20);
+        let mut draw_time: Instant = Instant::now() - draw_interval;
         let mut stats_time: Instant = Instant::now();
-        let interval = Duration::from_secs(1);
 
         loop {
             let now = Instant::now();
-            if now - stats_time >= interval {
+            if now - stats_time >= stats_interval {
                 for channel in self.channels.iter_mut() {
                     channel.stats.periodic();
                 }
                 stats_time = now;
             }
 
-            if !stop && (!self.idle || (now - draw_time > interval)) {
+            if !stop && !self.idle && (now - draw_time >= draw_interval) {
                 terminal.draw(|frame| self.draw(frame))?;
                 draw_time = now;
                 self.idle = true;
             }
 
-            // update stats for received packets
-            while (Instant::now() - now) < Duration::from_millis(10) {
-                match self.events.try_recv() {
-                    Ok(packet) => {
-                        let channel = self
-                            .channels
-                            .get_mut(packet.source)
-                            .expect("channel for id");
+            match self.events.recv_timeout(Duration::from_secs(1)) {
+                // newly arrived packet from one of the source channels
+                Ok(AppEvent::Packet(packet)) => {
+                    let channel = self
+                        .channels
+                        .get_mut(packet.source)
+                        .expect("channel for id");
 
-                        channel.stats.packet(&packet);
+                    channel.stats.packet(&packet);
 
-                        self.packets.push_front(packet);
-                        if self.packets.len() > 100 {
-                            let _ = self.packets.pop_back();
-                        }
-                        self.idle = false;
+                    self.packets.push_front(packet);
+                    if self.packets.len() > 100 {
+                        let _ = self.packets.pop_back();
                     }
-                    Err(mpsc::TryRecvError::Empty) => break,
-                    Err(mpsc::TryRecvError::Disconnected) => {
-                        // TODO: note the error, data stream is broken so may as well exit?
-                        break;
-                    }
+                    self.idle = false;
                 }
-                if self.idle {
-                    break;
-                }
-            }
-
-            // service user input
-            if event::poll(Duration::from_millis(5))? {
-                self.idle = false;
-                if let Event::Key(key) = event::read()? {
+                // user input
+                Ok(AppEvent::Key(key)) => {
+                    self.idle = false;
                     match key.code {
                         KeyCode::Esc => stop = !stop,
                         KeyCode::Char('q') => break,
@@ -269,6 +271,7 @@ impl App {
                         _ => {} // TODO: show help etc.
                     }
                 }
+                _ => (),
             }
         }
         Ok(())
@@ -325,8 +328,10 @@ impl App {
         let current = self.table_state.selected().unwrap_or(0) as i32;
         let mut new = current + by;
         let max = self.max_selection() as i32;
-        new = new.clamp(0, max - 1);
-        self.table_state.select(Some(new as usize));
+        if max > 0 {
+            new = new.clamp(0, max - 1);
+            self.table_state.select(Some(new as usize));
+        }
     }
 
     fn next_channel(&self, index: usize) -> usize {
@@ -503,9 +508,9 @@ impl App {
                 Constraint::Fill(1),
             ],
         )
-        .highlight_style(selected_style)
+        .row_highlight_style(selected_style)
         .block(Block::bordered().title(
-            " Message──────────────── Period ─── Data (A=ASCII, B=binary) ",
+            " Message──────────────── Period ─── Data (A=ASCII, B=binary, W/w=width) ",
         ));
 
         frame.render_stateful_widget(table, area, &mut self.table_state);
