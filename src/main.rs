@@ -197,7 +197,7 @@ impl App {
                 stats_time = now;
             }
 
-            if !stop && !self.idle && (now - draw_time >= draw_interval) {
+            if !stop && (!self.idle && (now - draw_time >= draw_interval)) {
                 terminal.draw(|frame| self.draw(frame))?;
                 draw_time = now;
                 self.idle = true;
@@ -271,7 +271,7 @@ impl App {
                         _ => {} // TODO: show help etc.
                     }
                 }
-                _ => (),
+                _ => self.idle = false,
             }
         }
         Ok(())
