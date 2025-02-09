@@ -19,6 +19,8 @@ use std::{collections::VecDeque, thread};
 
 use cli_log::*;
 
+use candor::popup::Popup;
+
 use ratatui::{
     crossterm::event::{self, Event, KeyCode},
     layout::{Alignment, Constraint, Layout, Margin, Rect},
@@ -94,12 +96,15 @@ struct App {
     expanded: bool,
     order: usize,
     idle: bool,
+    show_period: bool,
     show_source: bool,
+    show_dump: bool,
     enable_decode: bool,
     show_undecoded: bool,
     show_ascii: bool,
     show_bin: bool,
     visible_messages: u16,
+    show_help: bool,
 }
 
 impl App {
@@ -120,7 +125,7 @@ impl App {
 
             let source: Box<dyn Source> = match extension {
                 "trc" => Box::new(PeakTraceSource::new(
-                    ifname.as_str(),
+                    &ifname,
                     index,
                     args.baud,
                     args.sync_time,
@@ -132,7 +137,7 @@ impl App {
 
                 #[cfg(feature = "socketcan")]
                 _ => Box::new(SocketCanSource::new(
-                    ifname.as_str(),
+                    &ifname,
                     index,
                     args.baud,
                     tx.clone(),
@@ -173,11 +178,14 @@ impl App {
             order: 0,
             idle: false,
             show_source,
+            show_dump: true,
+            show_period: true,
             enable_decode: true,
             show_undecoded: true,
             show_ascii: false,
             show_bin: false,
             visible_messages: 1,
+            show_help: false,
         })
     }
 
@@ -224,9 +232,15 @@ impl App {
                     self.idle = false;
                     match key.code {
                         KeyCode::Esc => stop = !stop,
-                        KeyCode::Char('q') => break,
+                        KeyCode::Char('Q') => break,
+                        KeyCode::Char('D') => {
+                            self.show_dump = !self.show_dump;
+                        }
                         KeyCode::Char('S') => {
                             self.show_source = !self.show_source;
+                        }
+                        KeyCode::Char('P') => {
+                            self.show_period = !self.show_period;
                         }
                         KeyCode::Char('A') => {
                             self.show_ascii = !self.show_ascii;
@@ -267,6 +281,9 @@ impl App {
                             .update_selection(-(self.visible_messages as i32)),
                         KeyCode::PageDown => {
                             self.update_selection(self.visible_messages as i32)
+                        }
+                        KeyCode::Char('?') => {
+                            self.show_help = !self.show_help;
                         }
                         _ => {} // TODO: show help etc.
                     }
@@ -348,6 +365,27 @@ impl App {
         } else {
             0
         }
+    }
+
+    fn draw_help(&mut self, frame: &mut Frame) {
+        let area = frame.area().inner(Margin::new(frame.area().width / 4, 10));
+        let popup = Popup::default().title(" CANdor Help ").content(
+            r#"
+MESSAGE VIEW
+B = Toggle Binary Data
+A = Toggle ASCII Data
+P = Toggle Period
+d = Show/Hide Decoded Data
+u = Show/Hide Undecoded Data
+W/w = Increase/Decrease Data View Width
+<, > = Change Bus Ordering
+
+GENERAL
+D = Toggle Live Packet Dump
+Q = Quit
+"#,
+        );
+        frame.render_widget(popup, area);
     }
 
     fn draw_dump(&mut self, frame: &mut Frame, area: Rect) {
@@ -434,23 +472,29 @@ impl App {
                     id.push_str(format!("     {:03X} ", message.id).as_str());
                 };
 
+                let mut cols = vec![id];
+
                 // period
-                let period = if message.missing.is_zero() {
-                    let q = ((message.delta.as_millis() as u64 + 5) / 10) * 10;
-                    format!("{:5.0?}", Duration::from_millis(q))
-                } else {
-                    format!("! -{:5.0?}", message.missing)
-                };
+                if self.show_period {
+                    let period = if message.missing.is_zero() {
+                        let q =
+                            ((message.delta.as_millis() as u64 + 5) / 10) * 10;
+                        format!("{:5.0?}", Duration::from_millis(q))
+                    } else {
+                        format!("! -{:5.0?}", message.missing)
+                    };
+                    cols.push(period);
+                }
 
                 // raw data
                 let mut data = "".to_string();
                 if self.show_bin {
                     for byte in message.current.bytes.iter() {
-                        data.push_str(format!("{:08b}", byte).as_str());
+                        data.push_str(&format!("{:08b}", byte));
                     }
                 } else {
                     for byte in message.current.bytes.iter() {
-                        data.push_str(format!("{:02x} ", byte).as_str());
+                        data.push_str(&format!("{:02x} ", byte));
                     }
                     if self.show_ascii {
                         let len = message.current.bytes.len();
@@ -481,16 +525,16 @@ impl App {
                             }
                             let text =
                                 format!("\n  {} {}", signal.name(), value);
-                            data.push_str(text.as_str());
+                            data.push_str(&text);
                             height += 1;
                         }
                     }
                 }
 
+                cols.push(data);
+
                 let row = Row::new(
-                    vec![&id, &period, &data]
-                        .into_iter()
-                        .map(|s| Cell::from(Text::from(s.clone()))),
+                    cols.into_iter().map(|s| Cell::from(Text::from(s.clone()))),
                 )
                 .height(height)
                 .style(row_style);
@@ -500,18 +544,18 @@ impl App {
             order = self.next_channel(order);
         }
 
-        let table = Table::new(
-            rows,
-            [
-                Constraint::Length(24),
-                Constraint::Length(10),
-                Constraint::Fill(1),
-            ],
-        )
-        .row_highlight_style(selected_style)
-        .block(Block::bordered().title(
-            " Message──────────────── Period ─── Data (A=ASCII, B=binary, W/w=width) ",
-        ));
+        let mut header = " Message────────────────".to_string();
+        let mut cols = vec![Constraint::Length(24)];
+        if self.show_period {
+            cols.push(Constraint::Length(10));
+            header += " Period ───";
+        }
+        cols.push(Constraint::Fill(1));
+        header += " Data (A=ASCII, B=binary, W/w=width) ";
+
+        let table = Table::new(rows, cols)
+            .row_highlight_style(selected_style)
+            .block(Block::bordered().title(header));
 
         frame.render_stateful_widget(table, area, &mut self.table_state);
     }
@@ -531,7 +575,7 @@ impl App {
         ]);
         frame.render_widget(&title, area);
         let hints = Line::from(vec![Span::styled(
-            "(? for help, q to quit) ",
+            "(? for help, Q to quit) ",
             Style::default().fg(Color::Gray),
         )])
         .alignment(Alignment::Right);
@@ -591,6 +635,12 @@ impl App {
         }
 
         // stream dump
-        self.draw_dump(frame, rows[r.len() - 1]);
+        if self.show_dump {
+            self.draw_dump(frame, rows[r.len() - 1]);
+        }
+
+        if self.show_help {
+            self.draw_help(frame);
+        }
     }
 }

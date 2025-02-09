@@ -1,5 +1,6 @@
 //! CANdor library for CAN bus decoding/observation/reverse-engineering
 
+pub mod popup;
 pub mod sources;
 pub mod stats;
 
