@@ -1,4 +1,5 @@
-use crate::{sources::Source, AppEvent, Packet};
+use crate::Source;
+use candor::Packet;
 use socketcan::{
     BlockingCan, CanInterface, CanSocket, EmbeddedFrame, Frame, Socket,
 };
@@ -15,7 +16,7 @@ impl SocketCanSource {
         name: &str,
         index: usize,
         default_baud: u32,
-        tx: mpsc::Sender<AppEvent>,
+        tx: mpsc::Sender<Packet>,
     ) -> io::Result<Self> {
         let iface = CanInterface::open(name)?;
         let bit_rate = iface.bit_rate();
@@ -36,7 +37,7 @@ impl SocketCanSource {
                     id: res.raw_id(),
                     bytes: res.data().to_vec(),
                 };
-                if tx.send(AppEvent::Packet(packet)).is_err() {
+                if tx.send(packet).is_err() {
                     println!("Error sending frame event");
                 }
             }

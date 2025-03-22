@@ -1,0 +1,11 @@
+[package]
+name = "candor-io"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+candor = { version = "0.4.0", path = "../candor" }
+socketcan = { version = "3.3.0", optional = true }
+
+[features]
+socketcan = [ "dep:socketcan" ]

@@ -1,6 +1,7 @@
-use crate::{sources::Source, AppEvent, Packet};
+use crate::Source;
+use candor::Packet;
 
-use std::{f32, u32, u8};
+use std::{f32, u8, u32};
 use std::{
     fs::File,
     io::{self, BufRead, BufReader},
@@ -10,11 +11,11 @@ use std::{
     time::{Duration, Instant},
 };
 
-pub struct PeakTraceFile {
+pub struct TrcFile {
     packets: Vec<Packet>,
 }
 
-impl PeakTraceFile {
+impl TrcFile {
     pub fn new(name: &str, index: usize, sync_time: bool) -> io::Result<Self> {
         let file = File::open(name)?;
         let buf = BufReader::new(file);
@@ -81,20 +82,20 @@ impl PeakTraceFile {
     }
 }
 
-pub struct PeakTraceSource {
+pub struct TrcSource {
     name: String,
     baud: u32,
 }
 
-impl PeakTraceSource {
+impl TrcSource {
     pub fn new(
         name: &str,
         index: usize,
         default_baud: u32,
         sync_time: bool,
-        tx: mpsc::Sender<AppEvent>,
+        tx: mpsc::Sender<Packet>,
     ) -> io::Result<Self> {
-        let file = PeakTraceFile::new(name, index, sync_time)?;
+        let file = TrcFile::new(name, index, sync_time)?;
         thread::spawn(move || {
             let count = file.packets.len();
             let mut index = 0;
@@ -108,7 +109,7 @@ impl PeakTraceSource {
 
                 packet.time = Some(Instant::now());
 
-                if tx.send(AppEvent::Packet(packet)).is_err() {
+                if tx.send(packet).is_err() {
                     println!("Error sending frame event");
                 }
 
@@ -132,7 +133,7 @@ impl PeakTraceSource {
     }
 }
 
-impl Source for PeakTraceSource {
+impl Source for TrcSource {
     fn name(&self) -> String {
         let path = Path::new(&self.name);
         path.file_name()

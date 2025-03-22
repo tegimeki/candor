@@ -1,6 +1,6 @@
 use crate::Packet;
 use bitvec::prelude::*;
-use can_dbc::{ByteOrder, MessageId, MultiplexIndicator, ValueType, DBC};
+use can_dbc::{ByteOrder, DBC, MessageId, MultiplexIndicator, ValueType};
 use std::collections::BinaryHeap;
 use std::collections::HashMap;
 use std::collections::VecDeque;
@@ -32,7 +32,6 @@ pub struct Message {
     pub source: usize,
     pub dbc: Option<usize>,
     pub id: u32,
-    pub expanded: bool,
     pub extended: bool,
     pub count: u32,
     pub time: Option<Instant>,
@@ -88,7 +87,7 @@ impl Stats {
         }
     }
 
-    pub fn packet(&mut self, packet: &Packet) {
+    pub fn process_packet(&mut self, packet: &Packet) {
         self.packets += 1;
         self.packet_accum += 1;
 
@@ -214,9 +213,16 @@ impl Message {
             source: packet.source,
             dbc,
             id: packet.id,
-            expanded: true,
             extended: packet.extended,
             ..Default::default()
+        }
+    }
+
+    pub fn id_string(&self) -> String {
+        if self.extended {
+            format!("{:08X} ", self.id)
+        } else {
+            format!("     {:03X} ", self.id)
         }
     }
 }

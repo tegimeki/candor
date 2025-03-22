@@ -6,8 +6,8 @@ Provides similar functionality to the [can-utils](https://github.com/linux-can/c
 programs `cansniffer`, `candump`, `canbusload`, etc. with a terminal user interface.
 
 ```
-CANdor 0.1.0                                                                                   (? for help, q to quit)
-┌ Messages (<, > = bus order; W, w = width, u = show/hide undecoded) ────┐┌ vcan0 @ 15000bps ─────────────────────────┐
+CANdor 0.1.0                                                                                   (? for help, Q to quit)
+┌ Message──────────────── Period ─── Data (A=ASCII, B=binary)────────────┐┌ vcan0 @ 15000bps ─────────────────────────┐
 │BMS_info                 100ms      0a 02 aa 55 34 12 0b 00             ││███████        16% (30 pps)                │
 │     300                              BMS_infoIndex 10                  ││624 packets                                │
 │                                                                        ││                                           │
@@ -40,11 +40,11 @@ CANdor 0.1.0                                                                    
 ## Features
 
 - [x] Monitor multiple CAN interfaces
-- [x] Show frequency, count, etc. grouped by ID
-* [ ] Sorting / filtering the monitored data
+- [x] Show message frequency, count, etc. grouped by ID
+- [x] Show hex, binary and/or ASCII packet data
 - [x] Decode CAN data using DBC files (works, needs refining)
-- [ ] Analyze PCAP files with CAN traces
-- [ ] Traffic generator, pattern- and DBC-based
+- [ ] Sorting / filtering the monitored data
+- [x] Display and loop .trc (Peak Trace) files
 
 ## License
 

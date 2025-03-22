@@ -1,4 +1,4 @@
-pub mod peak_trace;
+pub mod trc;
 
 #[cfg(feature = "socketcan")]
 pub mod socketcan;

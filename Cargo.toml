@@ -1,17 +1,3 @@
-[package]
-name = "candor"
-version = "0.3.0"
-edition = "2021"
-
-[dependencies]
-bitvec = "1.0.1"
-can-dbc = "6.0.0"
-cli-log = "2.0.0"
-regex = "1.10.6"
-clap = { version = "4.5.17", features = ["derive"] }
-ratatui = { version = "0.29" }
-socketcan = { version = "3.3.0", optional = true }
-derive_setters = "0.1.6"
-
-[features]
-socketcan = ["dep:socketcan"]
+[workspace]
+members = [ "candor", "candor-io", "candor-tui" ]
+resolver = "3"

@@ -1,37 +1,35 @@
 //! CANdor TUI
 
-use candor::{
-    sources::{peak_trace::PeakTraceSource, Source},
-    stats::Stats,
-    AppEvent, Packet,
-};
+use candor::{Packet, stats::Stats};
+use candor_io::Source;
+use candor_io::trc::TrcSource;
 
 use clap::Parser;
 use regex::Regex;
 use std::fmt::Debug;
 use std::io::Result;
-#[cfg(not(feature = "socketcan"))]
-use std::io::{Error, ErrorKind};
 use std::path::Path;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 use std::{collections::VecDeque, thread};
 
-use cli_log::*;
-
-use candor::popup::Popup;
+mod popup;
+use popup::Popup;
 
 use ratatui::{
-    crossterm::event::{self, Event, KeyCode},
+    DefaultTerminal, Frame,
+    crossterm::event::{self, Event, KeyCode, KeyEvent},
     layout::{Alignment, Constraint, Layout, Margin, Rect},
     style::{Color, Modifier, Style, Stylize},
     text::{Line, Span, Text},
     widgets::{Block, Cell, Gauge, Paragraph, Row, Table, TableState},
-    DefaultTerminal, Frame,
 };
 
 #[cfg(feature = "socketcan")]
-use candor::sources::socketcan::SocketCanSource;
+use candor_io::socketcan::SocketCanSource;
+
+#[cfg(not(feature = "socketcan"))]
+use std::io::{Error, ErrorKind};
 
 const CHANNEL_COLORS: [Color; 10] = [
     Color::Blue,
@@ -46,9 +44,12 @@ const CHANNEL_COLORS: [Color; 10] = [
     Color::LightCyan,
 ];
 
-fn main() -> Result<()> {
-    init_cli_log!();
+enum AppEvent {
+    Packet(Packet),
+    Key(KeyEvent),
+}
 
+fn main() -> Result<()> {
     let mut app = App::new()?;
     let terminal = ratatui::init();
     let result = app.run(terminal);
@@ -61,8 +62,8 @@ fn main() -> Result<()> {
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 struct Args {
-    /// CAN adapter(s)
-    adapter: Vec<String>,
+    /// CAN interfaces and/or files
+    sources: Vec<String>,
 
     /// Bit rate for Virtual CAN interfaces
     #[arg(short, long, default_value = "125000")]
@@ -111,10 +112,11 @@ impl App {
     fn new() -> Result<Self> {
         let args = Args::parse();
 
-        // attach packet channel to all adapters
-        let (tx, rx) = mpsc::channel::<AppEvent>();
+        // attach packet channel to all sources
+        let (tx_events, rx_events) = mpsc::channel::<AppEvent>();
+        let (tx_packets, rx_packets) = mpsc::channel::<Packet>();
         let mut channels: Vec<Channel> = vec![];
-        for iface in args.adapter.iter() {
+        for iface in args.sources.iter() {
             let index = channels.len();
             let (ifname, dbcs) = App::parse_source(iface);
             let path = Path::new(&ifname);
@@ -124,12 +126,12 @@ impl App {
             };
 
             let source: Box<dyn Source> = match extension {
-                "trc" => Box::new(PeakTraceSource::new(
+                "trc" => Box::new(TrcSource::new(
                     &ifname,
                     index,
                     args.baud,
                     args.sync_time,
-                    tx.clone(),
+                    tx_packets.clone(),
                 )?),
 
                 #[cfg(not(feature = "socketcan"))]
@@ -140,7 +142,7 @@ impl App {
                     &ifname,
                     index,
                     args.baud,
-                    tx.clone(),
+                    tx_packets.clone(),
                 )?),
             };
 
@@ -159,7 +161,7 @@ impl App {
 
         // thread for user input events
         thread::spawn({
-            let tx = tx.clone();
+            let tx = tx_events.clone();
             move || loop {
                 if let Ok(Event::Key(key)) = event::read() {
                     tx.send(AppEvent::Key(key)).ok();
@@ -167,9 +169,19 @@ impl App {
             }
         });
 
+        // thread for incoming packets
+        thread::spawn({
+            let tx = tx_events.clone();
+            move || loop {
+                if let Ok(packet) = rx_packets.recv() {
+                    tx.send(AppEvent::Packet(packet)).ok();
+                }
+            }
+        });
+
         Ok(Self {
             cli: args,
-            events: rx,
+            events: rx_events,
             channels,
             packets: VecDeque::<Packet>::new(),
             table_state: TableState::default().with_selected(0),
@@ -219,7 +231,7 @@ impl App {
                         .get_mut(packet.source)
                         .expect("channel for id");
 
-                    channel.stats.packet(&packet);
+                    channel.stats.process_packet(&packet);
 
                     self.packets.push_front(packet);
                     if self.packets.len() > 100 {
@@ -466,11 +478,7 @@ Q = Quit
                     id.push('\n');
                     height += 1;
                 }
-                if message.extended {
-                    id.push_str(format!("{:08X} ", message.id).as_str());
-                } else {
-                    id.push_str(format!("     {:03X} ", message.id).as_str());
-                };
+                id.push_str(&message.id_string());
 
                 let mut cols = vec![id];
 
