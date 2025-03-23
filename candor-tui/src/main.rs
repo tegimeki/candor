@@ -367,12 +367,16 @@ impl App {
         if index > 0 {
             index - 1
         } else {
-            self.channels.len() - 1
+            if !self.channels.is_empty() {
+                self.channels.len() - 1
+            } else {
+                0
+            }
         }
     }
 
     fn prev_channel(&self, index: usize) -> usize {
-        if index < self.channels.len() - 1 {
+        if !self.channels.is_empty() && index < self.channels.len() - 1 {
             index + 1
         } else {
             0
@@ -447,9 +451,11 @@ Q = Quit
     fn draw_messages(&mut self, frame: &mut Frame, area: Rect) {
         let selected_style = Style::default().add_modifier(Modifier::REVERSED);
 
-        let mut rows: Vec<Row> = Vec::with_capacity(area.height as usize + 2);
+        let mut rows: Vec<Row> = Vec::with_capacity(area.height as usize);
         let channel_count = self.channels.len();
         let mut order = self.order;
+        let mut total_height = 0;
+        let max_height = area.height - 2;
         for _ in 0..channel_count {
             let channel = self.channels.get(order).unwrap();
 
@@ -478,7 +484,7 @@ Q = Quit
                     id.push('\n');
                     height += 1;
                 }
-                id.push_str(&message.id_string());
+                id.push_str(&message.current.id_string());
 
                 let mut cols = vec![id];
 
@@ -535,6 +541,9 @@ Q = Quit
                                 format!("\n  {} {}", signal.name(), value);
                             data.push_str(&text);
                             height += 1;
+                            if total_height + height >= max_height {
+                                break;
+                            }
                         }
                     }
                 }
@@ -548,6 +557,8 @@ Q = Quit
                 .style(row_style);
 
                 rows.push(row);
+
+                total_height += height;
             }
             order = self.next_channel(order);
         }

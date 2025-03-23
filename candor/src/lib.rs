@@ -12,3 +12,13 @@ pub struct Packet {
     pub id: u32,
     pub bytes: Vec<u8>,
 }
+
+impl Packet {
+    pub fn id_string(&self) -> String {
+        if self.extended {
+            format!("{:08X} ", self.id)
+        } else {
+            format!("     {:03X} ", self.id)
+        }
+    }
+}
