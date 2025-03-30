@@ -7,7 +7,6 @@ use candor_io::trc::TrcSource;
 use clap::Parser;
 use regex::Regex;
 use std::fmt::Debug;
-use std::io::Result;
 use std::path::Path;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
@@ -28,8 +27,7 @@ use ratatui::{
 #[cfg(feature = "socketcan")]
 use candor_io::socketcan::SocketCanSource;
 
-#[cfg(not(feature = "socketcan"))]
-use std::io::{Error, ErrorKind};
+use std::error::Error;
 
 const CHANNEL_COLORS: [Color; 10] = [
     Color::Blue,
@@ -49,7 +47,7 @@ enum AppEvent {
     Key(KeyEvent),
 }
 
-fn main() -> Result<()> {
+fn main() -> Result<(), Box<dyn Error>> {
     let mut app = App::new()?;
     let terminal = ratatui::init();
     let result = app.run(terminal);
@@ -109,7 +107,7 @@ struct App {
 }
 
 impl App {
-    fn new() -> Result<Self> {
+    fn new() -> Result<Self, Box<dyn Error>> {
         let args = Args::parse();
 
         // attach packet channel to all sources
@@ -135,7 +133,7 @@ impl App {
                 )?),
 
                 #[cfg(not(feature = "socketcan"))]
-                _ => return Err(Error::from(ErrorKind::InvalidInput)),
+                _ => return Err("Invalid argument".into()),
 
                 #[cfg(feature = "socketcan")]
                 _ => Box::new(SocketCanSource::new(
@@ -201,7 +199,10 @@ impl App {
         })
     }
 
-    fn run(&mut self, mut terminal: DefaultTerminal) -> std::io::Result<()> {
+    fn run(
+        &mut self,
+        mut terminal: DefaultTerminal,
+    ) -> Result<(), Box<dyn Error>> {
         let mut stop = false;
         let stats_interval = Duration::from_secs(1);
         let draw_interval = Duration::from_millis(20);
