@@ -1,8 +1,8 @@
 //! CANdor TUI
 
-use candor::{Packet, stats::Stats};
-use candor_io::Source;
+use candor::{stats::Stats, Packet};
 use candor_io::trc::TrcSource;
+use candor_io::Source;
 
 use clap::Parser;
 use regex::Regex;
@@ -16,12 +16,12 @@ mod popup;
 use popup::Popup;
 
 use ratatui::{
-    DefaultTerminal, Frame,
     crossterm::event::{self, Event, KeyCode, KeyEvent},
     layout::{Alignment, Constraint, Layout, Margin, Rect},
     style::{Color, Modifier, Style, Stylize},
     text::{Line, Span, Text},
     widgets::{Block, Cell, Gauge, Paragraph, Row, Table, TableState},
+    DefaultTerminal, Frame,
 };
 
 #[cfg(feature = "socketcan")]
@@ -455,7 +455,6 @@ Q = Quit
         let mut rows: Vec<Row> = Vec::with_capacity(area.height as usize);
         let channel_count = self.channels.len();
         let mut order = self.order;
-        let mut total_height = 0;
         let max_height = area.height - 2;
         for _ in 0..channel_count {
             let channel = self.channels.get(order).unwrap();
@@ -542,9 +541,6 @@ Q = Quit
                                 format!("\n  {} {}", signal.name(), value);
                             data.push_str(&text);
                             height += 1;
-                            if total_height + height >= max_height {
-                                break;
-                            }
                         }
                     }
                 }
@@ -558,8 +554,6 @@ Q = Quit
                 .style(row_style);
 
                 rows.push(row);
-
-                total_height += height;
             }
             order = self.next_channel(order);
         }
